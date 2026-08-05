@@ -855,6 +855,14 @@ class CallkitNotificationManager(
         val notificationId =
             data.getString(CallkitConstants.EXTRA_CALLKIT_ID, "callkit_incoming").hashCode()
         getNotificationManager().cancel(notificationId)
+        if (!isAccepted) {
+            // Ring ended without accept (decline / remote cancel / timeout): the
+            // incoming notification may be owned by the foreground service
+            // (Android 14+ path) and only disappears when that service stops.
+            // On accept the same service keeps running to host the ongoing-call
+            // notification, so it must NOT be stopped here.
+            CallkitNotificationService.stopService(context)
+        }
         targetInComingAvatarDefault?.let {
             targetInComingAvatarDefault?.isCancelled = true
             targetInComingAvatarDefault = null
@@ -1028,7 +1036,6 @@ class CallkitNotificationManager(
 
     @SuppressLint("MissingPermission")
     fun showIncomingNotification(data: Bundle) {
-        val callkitNotification = getIncomingNotification(data)
         if (incomingChannelEnabled()) {
             callkitSoundPlayerManager?.play(data)
             // Start Signify modification
@@ -1039,6 +1046,18 @@ class CallkitNotificationManager(
             )
             // End Signify modification
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+: a CallStyle notification is rejected with
+            // IllegalArgumentException unless it belongs to a foreground service
+            // or has a (permission-gated) fullScreenIntent. Post it as the
+            // phoneCall foreground service's notification instead of a plain
+            // notify() so the ring works without USE_FULL_SCREEN_INTENT.
+            CallkitNotificationService.startServiceWithAction(
+                context, CallkitConstants.ACTION_CALL_INCOMING, data
+            )
+            return
+        }
+        val callkitNotification = getIncomingNotification(data)
         callkitNotification?.let {
             getNotificationManager().notify(
                 it.id, callkitNotification.notification

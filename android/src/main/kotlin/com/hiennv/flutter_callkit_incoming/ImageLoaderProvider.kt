@@ -86,7 +86,14 @@ open class SafeTarget(
         super.onSuccess(result)
         Log.d("onSuccess", "-")
         if (!isCancelled) {
-            onLoaded((result as BitmapDrawable).bitmap)
+            try {
+                onLoaded((result as BitmapDrawable).bitmap)
+            } catch (e: Exception) {
+                // The avatar is decoration: the (call) notification is already
+                // showing. A failed update (e.g. platform rejecting a CallStyle
+                // re-notify) must never crash the process mid-ring.
+                Log.e("SafeTarget", "notification avatar update failed", e)
+            }
         }
     }
 
