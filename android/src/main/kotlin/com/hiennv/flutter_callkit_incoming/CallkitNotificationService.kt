@@ -114,24 +114,13 @@ class CallkitNotificationService : Service() {
      * through the existing phoneCall-typed service satisfies the first branch and
      * works for apps that had to drop USE_FULL_SCREEN_INTENT for Play policy.
      *
-     * Only FOREGROUND_SERVICE_TYPE_PHONE_CALL is used while ringing: microphone /
-     * camera types are while-in-use restricted and cannot be taken from a
-     * background (FCM) start; nothing is recorded during ring anyway. The accept
-     * path (showOngoingCallNotification) upgrades the types once the user acts.
+     * See [startCallForeground] for why phoneCall is the only service type used.
      */
     @SuppressLint("MissingPermission")
     private fun showIncomingCallNotification(bundle: Bundle) {
         val callkitNotification = getCallkitNotificationManager()?.getIncomingNotification(bundle)
         if (callkitNotification != null) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    callkitNotification.id,
-                    callkitNotification.notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-                )
-            } else {
-                startForeground(callkitNotification.id, callkitNotification.notification)
-            }
+            startCallForeground(callkitNotification.id, callkitNotification.notification)
             scheduleIncomingTimeout(bundle)
         } else {
             stopSelf()
@@ -164,29 +153,44 @@ class CallkitNotificationService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun showOngoingCallNotification(bundle: Bundle) {
-
         val callkitNotification =
             getCallkitNotificationManager()?.getOnGoingCallNotification(bundle, false)
         if (callkitNotification != null) {
-            val typeCall = bundle.getInt(CallkitConstants.EXTRA_CALLKIT_TYPE, -1)
-            startForeground(
-                callkitNotification.id,
-                callkitNotification.notification,
-                typeCall > 0
-            )
+            startCallForeground(callkitNotification.id, callkitNotification.notification)
         }
     }
 
-    private fun startForeground(notificationId: Int, notification: Notification, isVideo: Boolean) {
+    /**
+     * Promotes this service to the foreground as a call service.
+     *
+     * FOREGROUND_SERVICE_TYPE_PHONE_CALL is the ONLY type used, for both the ringing
+     * and the answered phase. It is the platform's designated type for an ongoing
+     * phone/VoIP session and is backed by MANAGE_OWN_CALLS plus the self-managed
+     * ConnectionService this plugin registers, so it is always legal here.
+     *
+     * The microphone and camera types must NOT be added: they are gated on
+     * while-in-use permissions, so `startForeground` with them throws
+     * SecurityException whenever the start came from the background — which is
+     * exactly the case when the user answers from the notification while the app is
+     * not in the foreground. Holding RECORD_AUDIO does not help; the platform also
+     * requires an eligible process state ("the app must be in the eligible
+     * state/exemptions to access the foreground only permission"). Upstream OR'd
+     * both types into the mask for the answered call, which crashed the app on every
+     * background answer (device evidence: Galaxy S25 FE / Android 16, 2026-08-08
+     * 17:12:15, "Starting FGS with type microphone ... requires permissions"), and
+     * for video calls it additionally required CAMERA, which may simply be denied.
+     *
+     * Capture itself is unaffected: answering brings the call UI to the foreground,
+     * and the audio session belongs to the Telecom connection, not to this type mask.
+     */
+    @SuppressLint("MissingPermission")
+    private fun startCallForeground(notificationId: Int, notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var mask = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                mask = mask or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                if (isVideo) {
-                    mask = mask or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                }
-            }
-            startForeground(notificationId, notification, mask)
+            startForeground(
+                notificationId,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            )
         } else {
             startForeground(notificationId, notification)
         }
