@@ -7,6 +7,7 @@
 
 package com.hiennv.flutter_callkit_incoming
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
@@ -21,10 +22,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.Window
 import android.view.WindowManager
+import android.view.animation.Animation
 import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -32,6 +37,7 @@ import android.widget.TextView
 import com.hiennv.flutter_callkit_incoming.widgets.RippleRelativeLayout
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlin.math.abs
+import kotlin.math.max
 import android.view.ViewGroup.MarginLayoutParams
 import android.os.PowerManager
 import android.text.TextUtils
@@ -43,6 +49,15 @@ class CallkitIncomingActivity : Activity() {
 
         private const val ACTION_ENDED_CALL_INCOMING =
             "com.hiennv.flutter_callkit_incoming.ACTION_ENDED_CALL_INCOMING"
+
+        /**
+         * How far the answer / decline button must be dragged upwards before it
+         * activates. Far enough that a stray swipe cannot answer or reject a call,
+         * short enough to stay within one thumb movement.
+         */
+        private const val DRAG_ACTIVATE_DISTANCE_DP = 72f
+
+        private const val DRAG_SPRING_BACK_MS = 180L
 
         fun getIntent(context: Context, data: Bundle) =
             Intent(CallkitConstants.ACTION_CALL_INCOMING).apply {
@@ -337,6 +352,76 @@ class CallkitIncomingActivity : Activity() {
         ivDeclineCall.setOnClickListener {
             onDeclineClick()
         }
+        ivAcceptCall.enableDragUpToActivate { onAcceptClick() }
+        ivDeclineCall.enableDragUpToActivate { onDeclineClick() }
+    }
+
+    /**
+     * Lets the answer / decline button be triggered by dragging it upwards, the
+     * gesture users expect from a ringing screen, while leaving the plain tap
+     * untouched.
+     *
+     * The button follows the finger upwards only; releasing past
+     * [DRAG_ACTIVATE_DISTANCE_DP] runs [onActivate], and releasing short of it
+     * springs the button back so an accidental swipe cannot answer a call.
+     * Movement below the platform touch slop is forwarded as a real click through
+     * [View.performClick], so the click listeners above stay the single place where
+     * the actions are wired and accessibility services keep working.
+     *
+     * The shake animation on the answer button is a legacy view animation that
+     * writes the same transform as [View.setTranslationY]; it is cleared while the
+     * finger is down and restored if the gesture is abandoned.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun View.enableDragUpToActivate(onActivate: () -> Unit) {
+        val activateDistance = DRAG_ACTIVATE_DISTANCE_DP * resources.displayMetrics.density
+        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        var downY = 0f
+        var dragging = false
+        var interruptedAnimation: Animation? = null
+        setOnTouchListener { view, event ->
+            val travelledUp = downY - event.rawY
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downY = event.rawY
+                    dragging = false
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (!dragging && travelledUp > touchSlop) {
+                        dragging = true
+                        interruptedAnimation = view.animation
+                        view.clearAnimation()
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (dragging) view.translationY = -max(0f, travelledUp)
+                }
+
+                MotionEvent.ACTION_UP -> when {
+                    travelledUp >= activateDistance -> {
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        onActivate()
+                    }
+
+                    dragging -> view.springBackFrom(interruptedAnimation)
+                    else -> view.performClick()
+                }
+
+                MotionEvent.ACTION_CANCEL -> if (dragging) {
+                    view.springBackFrom(interruptedAnimation)
+                }
+
+                else -> return@setOnTouchListener false
+            }
+            true
+        }
+    }
+
+    /** Slides the button back to its resting place and restores [animation]. */
+    private fun View.springBackFrom(animation: Animation?) {
+        animate().translationY(0f).setDuration(DRAG_SPRING_BACK_MS)
+            .withEndAction { animation?.let { startAnimation(it) } }
+            .start()
     }
 
     private fun animateAcceptCall() {
