@@ -204,9 +204,18 @@ class CallkitNotificationManager(
         )
         notificationBuilder?.setOnlyAlertOnce(true)
         notificationBuilder?.setSound(null)
-        notificationBuilder?.setFullScreenIntent(
-            getActivityPendingIntent(notificationId, data), true
-        )
+        // Only attach the full-screen intent when the app is actually allowed to use
+        // one. Since Android 14 USE_FULL_SCREEN_INTENT is granted to calling/alarm apps
+        // only; declaring an unusable fullScreenIntent makes the platform and some OEM
+        // shells treat the notification as a mis-configured full-screen alert. The
+        // Android 14+ CallStyle requirement is already satisfied by posting this
+        // notification from the phoneCall foreground service, so dropping the intent
+        // costs nothing: contentIntent below still opens the incoming-call screen.
+        if (canUseFullScreenIntent()) {
+            notificationBuilder?.setFullScreenIntent(
+                getActivityPendingIntent(notificationId, data), true
+            )
+        }
         notificationBuilder?.setContentIntent(getActivityPendingIntent(notificationId, data))
         notificationBuilder?.setDeleteIntent(getTimeOutPendingIntent(notificationId, data))
         val typeCall = data.getInt(CallkitConstants.EXTRA_CALLKIT_TYPE, -1)
@@ -1096,21 +1105,24 @@ class CallkitNotificationManager(
     }
 
     fun requestFullIntentPermission(activity: Activity?) {
-        val canUseFullScreenIntent = getNotificationManager().canUseFullScreenIntent()
-        if (!canUseFullScreenIntent && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                data = Uri.fromParts("package", activity?.packageName, null)
-            }
-            activity?.startActivity(intent)
+        if (canUseFullScreenIntent()) return
+        val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+            data = Uri.fromParts("package", activity?.packageName, null)
         }
+        activity?.startActivity(intent)
     }
 
+    /**
+     * Whether this app may post notifications carrying a full-screen intent.
+     *
+     * The version gate must come BEFORE the platform call:
+     * [NotificationManager.canUseFullScreenIntent] only exists on API 34+, so invoking
+     * it on older releases throws NoSuchMethodError. Below API 34 a full-screen intent
+     * needs no runtime grant, hence `true`.
+     */
     fun canUseFullScreenIntent(): Boolean {
-        val canUseFullScreenIntent = getNotificationManager().canUseFullScreenIntent()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            return canUseFullScreenIntent
-        }
-        return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
+        return getNotificationManager().canUseFullScreenIntent()
     }
 
 

@@ -9,11 +9,9 @@ package com.hiennv.flutter_callkit_incoming
 
 import android.app.Activity
 import android.app.KeyguardManager
-import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.graphics.Color
@@ -36,7 +34,6 @@ import de.hdodenhof.circleimageview.CircleImageView
 import kotlin.math.abs
 import android.view.ViewGroup.MarginLayoutParams
 import android.os.PowerManager
-import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 
@@ -101,16 +98,17 @@ class CallkitIncomingActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val notificationManager =
-                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (!notificationManager.canUseFullScreenIntent()) {
-                startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                    flags = FLAG_ACTIVITY_NEW_TASK
-                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                })
-            }
-        }
+        // NOTE: this activity must never navigate away from itself. Upstream opened
+        // Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT here whenever
+        // canUseFullScreenIntent() was false, which covered the ringing UI with the
+        // settings page the moment the user tapped the call notification — the call
+        // could not be answered at all. Apps that deliberately do not declare
+        // USE_FULL_SCREEN_INTENT (Play policy limits it to calling apps) are not even
+        // listed on that page, so the redirect was an inescapable dead end.
+        // This screen needs no permission: it is started by the notification's
+        // contentIntent, and setShowWhenLocked/setTurnScreenOn below handle the
+        // lock screen. Permission requesting stays opt-in via
+        // FlutterCallkitIncoming.requestFullIntentPermission().
         requestedOrientation = if (!Utils.isTablet(this@CallkitIncomingActivity)) {
             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         } else {
