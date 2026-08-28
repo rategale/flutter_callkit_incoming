@@ -125,6 +125,9 @@ data class Data(val args: Map<String, Any?>) {
     @JsonProperty("missedCallNotificationChannelName")
     var missedCallNotificationChannelName: String? = null
 
+    @JsonProperty("onGoingCallNotificationChannelName")
+    var onGoingCallNotificationChannelName: String? = null
+
     @JsonProperty("isShowFullLockedScreen")
     var isShowFullLockedScreen: Boolean = true
 
@@ -156,6 +159,8 @@ data class Data(val args: Map<String, Any?>) {
         incomingCallNotificationChannelName =
             android["incomingCallNotificationChannelName"] as? String
         missedCallNotificationChannelName = android["missedCallNotificationChannelName"] as? String
+        onGoingCallNotificationChannelName =
+            android["onGoingCallNotificationChannelName"] as? String
         isShowFullLockedScreen = android["isShowFullLockedScreen"] as? Boolean ?: true
         isImportant = android["isImportant"] as? Boolean ?: false
         isBot = android["isBot"] as? Boolean ?: false
@@ -316,6 +321,10 @@ data class Data(val args: Map<String, Any?>) {
             CallkitConstants.EXTRA_CALLKIT_MISSED_CALL_NOTIFICATION_CHANNEL_NAME,
             missedCallNotificationChannelName
         )
+        bundle.putString(
+            CallkitConstants.EXTRA_CALLKIT_ONGOING_CALL_NOTIFICATION_CHANNEL_NAME,
+            onGoingCallNotificationChannelName
+        )
         bundle.putBoolean(
             CallkitConstants.EXTRA_CALLKIT_IS_SHOW_FULL_LOCKED_SCREEN,
             isShowFullLockedScreen
@@ -435,6 +444,9 @@ data class Data(val args: Map<String, Any?>) {
             )
             data.missedCallNotificationChannelName = bundle.getString(
                 CallkitConstants.EXTRA_CALLKIT_MISSED_CALL_NOTIFICATION_CHANNEL_NAME
+            )
+            data.onGoingCallNotificationChannelName = bundle.getString(
+                CallkitConstants.EXTRA_CALLKIT_ONGOING_CALL_NOTIFICATION_CHANNEL_NAME
             )
             data.isShowFullLockedScreen = bundle.getBoolean(
                 CallkitConstants.EXTRA_CALLKIT_IS_SHOW_FULL_LOCKED_SCREEN,

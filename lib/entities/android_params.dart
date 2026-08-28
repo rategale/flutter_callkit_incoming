@@ -25,6 +25,7 @@ class AndroidParams {
     this.textColor,
     this.incomingCallNotificationChannelName,
     this.missedCallNotificationChannelName,
+    this.onGoingCallNotificationChannelName,
     this.isShowFullLockedScreen,
     this.isImportant,
     this.isBot,
@@ -70,6 +71,10 @@ class AndroidParams {
   /// Notification channel name of missed call.
   final String? missedCallNotificationChannelName;
 
+  /// Notification channel name of the ongoing call (the persistent CallStyle
+  /// notification shown while a call is active).
+  final String? onGoingCallNotificationChannelName;
+
   /// Show full locked screen.
   final bool? isShowFullLockedScreen;
 
@@ -112,6 +117,7 @@ class AndroidParams {
         'textColor: $textColor, '
         'incomingCallNotificationChannelName: $incomingCallNotificationChannelName, '
         'missedCallNotificationChannelName: $missedCallNotificationChannelName, '
+        'onGoingCallNotificationChannelName: $onGoingCallNotificationChannelName, '
         'isShowFullLockedScreen: $isShowFullLockedScreen, '
         'isImportant: $isImportant, '
         'isBot: $isBot, '
