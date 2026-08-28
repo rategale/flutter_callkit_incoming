@@ -705,7 +705,15 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
                 action.fulfill()
             }
         }else {
+            // Release BOTH slots, the outgoing one included. They are single
+            // slots reused across calls, and the branch above reads them to tell
+            // a DECLINE (nothing was ever answered or placed) from an END. Only
+            // answerCall was released here, so once an app placed an outgoing
+            // call the reference stayed forever and every later incoming call the
+            // user rejected from the CallKit UI reported ACTION_CALL_ENDED
+            // instead of ACTION_CALL_DECLINE — the decline never reached the app.
             self.answerCall = nil
+            self.outgoingCall = nil
             sendEvent(SwiftFlutterCallkitIncomingPlugin.ACTION_CALL_ENDED, call.data.toJSON())
             if let appDelegate = UIApplication.shared.delegate as? CallkitIncomingAppDelegate {
                 appDelegate.onEnd(call, action)

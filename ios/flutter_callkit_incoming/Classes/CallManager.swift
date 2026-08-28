@@ -75,7 +75,16 @@ class CallManager: NSObject {
     func connectedCall(call: Call) {
         let callItem = self.callWithUUID(uuid: call.uuid)
         callItem?.connectedCall(completion: nil)
-        
+        // The line above is what actually reports the call as connected: it flips
+        // hasConnected, whose observer calls reportOutgoingCall(connectedAt:).
+        //
+        // An OUTGOING call must stop here. CXAnswerCallAction answers an INCOMING
+        // call; requesting it for a call this device placed is rejected by CallKit,
+        // and the only trace is a printed error — so an app that reports its own
+        // outgoing call as connected would look correct while logging a failed
+        // transaction on every call.
+        if callItem?.isOutGoing == true { return }
+
         let answerAction = CXAnswerCallAction(call: call.uuid)        
         let transaction = CXTransaction(action: answerAction)
 
