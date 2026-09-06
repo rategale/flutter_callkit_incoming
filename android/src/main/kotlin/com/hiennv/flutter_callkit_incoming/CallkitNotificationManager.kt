@@ -29,6 +29,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
 import android.text.format.DateFormat
+import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import androidx.appcompat.app.AlertDialog
@@ -45,6 +46,8 @@ class CallkitNotificationManager(
 ) {
 
     companion object {
+        private const val TAG = "CallkitNotificationManager"
+
         const val PERMISSION_NOTIFICATION_REQUEST_CODE = 6969
 
         const val EXTRA_TIME_START_CALL = "EXTRA_TIME_START_CALL"
@@ -204,18 +207,33 @@ class CallkitNotificationManager(
         )
         notificationBuilder?.setOnlyAlertOnce(true)
         notificationBuilder?.setSound(null)
-        // Only attach the full-screen intent when the app is actually allowed to use
-        // one. Since Android 14 USE_FULL_SCREEN_INTENT is granted to calling/alarm apps
-        // only; declaring an unusable fullScreenIntent makes the platform and some OEM
-        // shells treat the notification as a mis-configured full-screen alert. The
-        // Android 14+ CallStyle requirement is already satisfied by posting this
-        // notification from the phoneCall foreground service, so dropping the intent
-        // costs nothing: contentIntent below still opens the incoming-call screen.
-        if (canUseFullScreenIntent()) {
-            notificationBuilder?.setFullScreenIntent(
-                getActivityPendingIntent(notificationId, data), true
-            )
-        }
+        // The full-screen intent is ALWAYS attached; the platform, not this code,
+        // decides what becomes of it. On Android 14+ NotificationManagerService
+        // checks USE_FULL_SCREEN_INTENT when the notification is posted:
+        //  - granted → SystemUI launches the ringing activity when the screen is off
+        //    or the keyguard is showing (FSI_DEVICE_NOT_INTERACTIVE /
+        //    FSI_KEYGUARD_SHOWING); while the device is in use it shows a heads-up
+        //    that stays pinned because the notification carries a full-screen intent;
+        //  - denied → the intent is stripped and the notification is flagged
+        //    FLAG_FSI_REQUESTED_BUT_DENIED, which SystemUI renders as a STICKY
+        //    heads-up (NO_FSI_SHOW_STICKY_HUN) that stays until the user acts.
+        // An earlier revision of this fork only attached the intent when
+        // canUseFullScreenIntent() was true. That threw the platform fallback away:
+        // with no intent at all the heads-up auto-collapses after a few seconds while
+        // the phone keeps ringing, and the user has to open the shade to find the
+        // call. The Android 14+ CallStyle requirement is a separate matter and is
+        // satisfied by posting this notification from the phoneCall foreground
+        // service (CallkitNotificationService).
+        // The permission state is logged so a device trace answers "was full screen
+        // possible on this phone?" without a second experiment.
+        Log.i(
+            TAG,
+            "incoming notification: fullScreenIntent attached, " +
+                "canUseFullScreenIntent=" + canUseFullScreenIntent()
+        )
+        notificationBuilder?.setFullScreenIntent(
+            getActivityPendingIntent(notificationId, data), true
+        )
         notificationBuilder?.setContentIntent(getActivityPendingIntent(notificationId, data))
         notificationBuilder?.setDeleteIntent(getTimeOutPendingIntent(notificationId, data))
         val typeCall = data.getInt(CallkitConstants.EXTRA_CALLKIT_TYPE, -1)
