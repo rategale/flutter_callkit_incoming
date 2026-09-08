@@ -141,6 +141,14 @@ class CallkitIncomingActivity : Activity() {
         transparentStatusAndNavigation()
         setContentView(R.layout.activity_callkit_incoming)
         initView()
+        // Reaching onCreate while the notification asked for a full-screen intent is
+        // the definitive proof that full-screen ringing works on this device — the
+        // one thing no permission query can answer below API 34.
+        FullScreenRingProbe.onFullScreenShown(
+            applicationContext,
+            intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
+                ?.getString(CallkitConstants.EXTRA_CALLKIT_ID, ""),
+        )
         incomingData(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(

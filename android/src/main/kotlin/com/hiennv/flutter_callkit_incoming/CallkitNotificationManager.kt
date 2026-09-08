@@ -234,6 +234,12 @@ class CallkitNotificationManager(
         notificationBuilder?.setFullScreenIntent(
             getActivityPendingIntent(notificationId, data), true
         )
+        // What the platform DOES with that intent is not observable from here, so
+        // the outcome is measured instead: this marks a ring that is supposed to go
+        // full screen, and CallkitIncomingActivity marks the ones that actually did.
+        FullScreenRingProbe.onIncomingPosted(
+            context, data.getString(CallkitConstants.EXTRA_CALLKIT_ID, "")
+        )
         notificationBuilder?.setContentIntent(getActivityPendingIntent(notificationId, data))
         notificationBuilder?.setDeleteIntent(getTimeOutPendingIntent(notificationId, data))
         val typeCall = data.getInt(CallkitConstants.EXTRA_CALLKIT_TYPE, -1)
@@ -1128,6 +1134,70 @@ class CallkitNotificationManager(
             data = Uri.fromParts("package", activity?.packageName, null)
         }
         activity?.startActivity(intent)
+    }
+
+    /**
+     * Opens the screen on which the user can actually enable full-screen ringing.
+     *
+     * [requestFullIntentPermission] alone is a dead end below API 34: the permission
+     * is granted unconditionally there, so it returns immediately and NOTHING opens —
+     * silently, with no error. On those releases the only thing standing between the
+     * user and a full-screen ring is the manufacturer's own permission screen, so
+     * that is where this goes.
+     *
+     * Three steps, most specific first:
+     *  1. API 34+ with the platform permission withheld → the platform's own page.
+     *  2. MIUI's permission editor, which is where "display pop-up windows while
+     *     running in the background" and "show on lock screen" live. Every other
+     *     ROM's editor is either unnamed or renamed between versions, so only this
+     *     one — by far the most common — is addressed directly.
+     *  3. The app's own settings page, which exists on every Android build and from
+     *     which every OEM's permission list is one tap away.
+     *
+     * Returns true when something was opened, so the caller never reports success
+     * for a screen that never appeared.
+     */
+    fun openFullScreenRingSettings(activity: Activity?): Boolean {
+        val host = activity ?: return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            !canUseFullScreenIntent()
+        ) {
+            if (startIfResolvable(
+                    host,
+                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                        data = Uri.fromParts("package", host.packageName, null)
+                    },
+                )
+            ) {
+                return true
+            }
+        }
+        val miui = Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+            setClassName(
+                "com.miui.securitycenter",
+                "com.miui.permcenter.permissions.PermissionsEditorActivity",
+            )
+            putExtra("extra_pkgname", host.packageName)
+        }
+        if (startIfResolvable(host, miui)) return true
+        return startIfResolvable(
+            host,
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", host.packageName, null)
+            },
+        )
+    }
+
+    /** Starts [intent] only if something can handle it; never throws. */
+    private fun startIfResolvable(activity: Activity, intent: Intent): Boolean {
+        return try {
+            if (intent.resolveActivity(activity.packageManager) == null) return false
+            activity.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "settings screen could not be opened: ${e.message}")
+            false
+        }
     }
 
     /**

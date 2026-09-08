@@ -426,6 +426,32 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
                     result.success(callkitNotificationManager?.canUseFullScreenIntent() ?: true)
                 }
 
+                // Everything the app needs to decide whether to offer help with
+                // lock-screen ringing, in one round trip. The platform reports FACTS
+                // only — the current permission, what was measured on real calls, and
+                // whether this ROM has a vendor gate at all; which of them matters is
+                // the app's decision, kept in Dart where it stays testable.
+                "getFullScreenRingState" -> {
+                    result.success(
+                        mapOf(
+                            "permissionGranted" to
+                                (callkitNotificationManager?.canUseFullScreenIntent() ?: true),
+                            "observed" to FullScreenRingProbe.observed(context),
+                            "manufacturerGated" to FullScreenRingProbe.isManufacturerGated(),
+                        )
+                    )
+                }
+
+                // Opens the screen that can actually turn full-screen ringing on —
+                // the platform's page on API 34+, the manufacturer's permission
+                // editor otherwise. Returns false when nothing could be opened, so
+                // the app never claims it sent the user somewhere it did not.
+                "openFullScreenRingSettings" -> {
+                    result.success(
+                        callkitNotificationManager?.openFullScreenRingSettings(activity) ?: false
+                    )
+                }
+
                 // EDIT - clear the incoming notification/ring (after accept/decline/timeout)
                 "hideCallkitIncoming" -> {
                     val data = Data(call.arguments() ?: HashMap())

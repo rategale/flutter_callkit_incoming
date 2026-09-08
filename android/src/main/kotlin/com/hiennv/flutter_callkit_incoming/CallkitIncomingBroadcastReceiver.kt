@@ -151,6 +151,18 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
         }
     }
 
+    /**
+     * A ring reached a terminal state. If it was posted while the device was locked
+     * and the full-screen UI never appeared, that is the measurement the app needs
+     * (see [FullScreenRingProbe]).
+     */
+    private fun settleFullScreenProbe(context: Context, data: Bundle) {
+        FullScreenRingProbe.onRingFinished(
+            context.applicationContext,
+            data.getString(CallkitConstants.EXTRA_CALLKIT_ID, ""),
+        )
+    }
+
     private fun driveTelecomConnection(context: Context, data: Bundle, action: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val parsed = try {
@@ -210,6 +222,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
 
             "${context.packageName}.${CallkitConstants.ACTION_CALL_ACCEPT}" -> {
                 try {
+                    settleFullScreenProbe(context, data)
                     driveTelecomConnection(context, data, CallkitConstants.ACTION_CALL_ACCEPT)
                     FlutterCallkitIncomingPlugin.notifyEventCallbacks(CallkitEventCallback.CallEvent.ACCEPT, data)
                     // start service and show ongoing call when call is accepted
@@ -228,6 +241,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
 
             "${context.packageName}.${CallkitConstants.ACTION_CALL_DECLINE}" -> {
                 try {
+                    settleFullScreenProbe(context, data)
                     driveTelecomConnection(context, data, CallkitConstants.ACTION_CALL_DECLINE)
                     FlutterCallkitIncomingPlugin.notifyEventCallbacks(CallkitEventCallback.CallEvent.DECLINE, data)
                     // clear notification
@@ -241,6 +255,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
 
             "${context.packageName}.${CallkitConstants.ACTION_CALL_ENDED}" -> {
                 try {
+                    settleFullScreenProbe(context, data)
                     driveTelecomConnection(context, data, CallkitConstants.ACTION_CALL_ENDED)
                     FlutterCallkitIncomingPlugin.notifyEventCallbacks(CallkitEventCallback.CallEvent.END, data)
                     // clear notification and stop service
@@ -255,6 +270,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
 
             "${context.packageName}.${CallkitConstants.ACTION_CALL_TIMEOUT}" -> {
                 try {
+                    settleFullScreenProbe(context, data)
                     driveTelecomConnection(context, data, CallkitConstants.ACTION_CALL_TIMEOUT)
                     // clear notification and show miss notification
                     val notificationManager = getCallkitNotificationManager()

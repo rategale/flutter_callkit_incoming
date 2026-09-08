@@ -231,6 +231,32 @@ class FlutterCallkitIncoming {
     return await _channel.invokeMethod("canUseFullScreenIntent");
   }
 
+  /// Facts about full-screen ringing on this device (Android only).
+  ///
+  /// `canUseFullScreenIntent` is not enough on its own: below API 34 it always
+  /// answers `true`, yet OEM ROMs (MIUI, ColorOS, EMUI…) still block the
+  /// full-screen activity behind private permissions that have no public API.
+  /// This returns three facts instead of one verdict, so the app can decide:
+  ///
+  ///  * `permissionGranted` (bool) — the API 34+ special access; `true` below 34.
+  ///  * `observed` (String) — `unknown` | `works` | `blocked`, measured on real
+  ///    lock-screen calls: did the full-screen UI actually appear?
+  ///  * `manufacturerGated` (bool) — this ROM is known to have such a gate, so
+  ///    help may be worth offering before anything has been measured.
+  static Future<Map<String, dynamic>> getFullScreenRingState() async {
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'getFullScreenRingState',
+    );
+    return result ?? const <String, dynamic>{};
+  }
+
+  /// Opens the screen where full-screen ringing can be enabled (Android only):
+  /// the platform's page on API 34+, the manufacturer's permission editor
+  /// otherwise. Returns `false` when no screen could be opened.
+  static Future<bool> openFullScreenRingSettings() async {
+    return await _channel.invokeMethod('openFullScreenRingSettings') ?? false;
+  }
+
   static CallEvent? _receiveCallEvent(dynamic data) {
     if (data is! Map) {
       return null;
