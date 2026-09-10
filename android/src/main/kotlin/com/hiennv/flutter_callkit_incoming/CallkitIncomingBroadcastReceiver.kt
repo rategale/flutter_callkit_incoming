@@ -134,12 +134,16 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
         val telecom = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager ?: return
         val manager = InAppCallManager(context.applicationContext)
         val handle = manager.getPhoneAccountHandle()
+        // The video state must come from the CALL, not from a constant. It was
+        // hard-coded to audio-only, so every video call reached Telecom as an
+        // audio call: the system call UI, the CallStyle notification and any
+        // handover surface (car, watch, another dialer) showed the wrong kind.
+        // `type` is the plugin's own call kind — 0 audio, anything above video
+        // (same predicate the notification layer already uses for its icon).
+        val videoState = CallkitConnection.videoStateFor(parsed.type)
         val extras = Bundle().apply {
             putBundle(CallkitConnection.EXTRA_CALL_BUNDLE, data)
-            putInt(
-                TelecomManager.EXTRA_INCOMING_VIDEO_STATE,
-                android.telecom.VideoProfile.STATE_AUDIO_ONLY,
-            )
+            putInt(TelecomManager.EXTRA_INCOMING_VIDEO_STATE, videoState)
         }
         try {
             telecom.addNewIncomingCall(handle, extras)

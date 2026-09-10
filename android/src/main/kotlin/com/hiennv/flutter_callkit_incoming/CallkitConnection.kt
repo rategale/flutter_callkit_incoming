@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.telecom.Connection
 import android.telecom.DisconnectCause
+import android.telecom.VideoProfile
 import android.util.Log
 import androidx.annotation.RequiresApi
 import java.util.concurrent.ConcurrentHashMap
@@ -37,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap
 class CallkitConnection(
     val callId: String,
     val bundle: Bundle,
+    initialVideoState: Int = VideoProfile.STATE_AUDIO_ONLY,
 ) : Connection() {
 
     companion object {
@@ -44,6 +46,22 @@ class CallkitConnection(
 
         /** Bundle key — pass the full call Data bundle through Telecom extras. */
         const val EXTRA_CALL_BUNDLE = "com.hiennv.flutter_callkit_incoming.CALL_BUNDLE"
+
+        /**
+         * The plugin's call kind → Telecom video state. ONE definition, used by
+         * the incoming registration and by both ConnectionService paths.
+         *
+         * Two copies of this predicate would be worse than none: the receiver
+         * could register a call as video while the Connection reported audio,
+         * and the two would disagree with no error anywhere. `type` is the
+         * plugin's own field — 0 audio, anything above video, the same
+         * predicate the notification layer uses for its icon.
+         *
+         * Bidirectional, not one-way: this plugin hosts symmetric peer calls,
+         * and TX/RX-only states describe a capability the app does not offer.
+         */
+        fun videoStateFor(type: Int): Int =
+            if (type > 0) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY
 
         private val activeConnections = ConcurrentHashMap<String, CallkitConnection>()
 
@@ -68,9 +86,27 @@ class CallkitConnection(
     init {
         connectionProperties = PROPERTY_SELF_MANAGED
         audioModeIsVoip = true
-        connectionCapabilities = CAPABILITY_MUTE or CAPABILITY_SUPPORT_HOLD
+        var capabilities = CAPABILITY_MUTE or CAPABILITY_SUPPORT_HOLD
+        // A video call must SAY it is one. Telecom shows the kind in the system
+        // call UI and hands it to Bluetooth/car/watch surfaces; a video call
+        // reported as audio is shown with the wrong icon everywhere and cannot
+        // be handed over as video. The VT capabilities go with the state: the
+        // state is "this call is video now", the capabilities are "this
+        // connection can carry video in both directions" — Telecom needs both
+        // before it will let the call be treated as video.
+        if (VideoProfile.isVideo(initialVideoState)) {
+            capabilities = capabilities or
+                CAPABILITY_SUPPORTS_VT_LOCAL_BIDIRECTIONAL or
+                CAPABILITY_SUPPORTS_VT_REMOTE_BIDIRECTIONAL
+        }
+        connectionCapabilities = capabilities
+        setVideoState(initialVideoState)
         register(callId, this)
-        Log.d(TAG, "Connection created id=$callId active=${activeCount()}")
+        Log.d(
+            TAG,
+            "Connection created id=$callId video=${VideoProfile.isVideo(initialVideoState)} " +
+                "active=${activeCount()}",
+        )
     }
 
     // -------------------------------------------------------------------------

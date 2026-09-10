@@ -9,6 +9,7 @@ import android.telecom.ConnectionService
 import android.telecom.DisconnectCause
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
+import android.telecom.VideoProfile
 import android.util.Log
 import androidx.annotation.RequiresApi
 
@@ -58,7 +59,14 @@ class CallkitConnectionService : ConnectionService() {
 
         Log.d(TAG, "onCreateIncomingConnection id=$callId caller=${data.nameCaller}")
 
-        val connection = CallkitConnection(callId, callBundle).apply {
+        // Telecom's own decision wins when it made one: it may clamp the
+        // requested state (account capability, OEM policy, an ongoing cellular
+        // call). Falling back to the call's own kind covers the paths where the
+        // request carries no state at all.
+        val videoState =
+            requestedVideoState(request) ?: CallkitConnection.videoStateFor(data.type)
+
+        val connection = CallkitConnection(callId, callBundle, videoState).apply {
             if (data.nameCaller.isNotEmpty()) {
                 setCallerDisplayName(data.nameCaller, TelecomManager.PRESENTATION_ALLOWED)
             }
@@ -98,7 +106,10 @@ class CallkitConnectionService : ConnectionService() {
 
         Log.d(TAG, "onCreateOutgoingConnection id=$callId callee=${data.nameCaller}")
 
-        val connection = CallkitConnection(callId, callBundle).apply {
+        val videoState =
+            requestedVideoState(request) ?: CallkitConnection.videoStateFor(data.type)
+
+        val connection = CallkitConnection(callId, callBundle, videoState).apply {
             if (data.nameCaller.isNotEmpty()) {
                 setCallerDisplayName(data.nameCaller, TelecomManager.PRESENTATION_ALLOWED)
             }
@@ -118,6 +129,12 @@ class CallkitConnectionService : ConnectionService() {
     ) {
         super.onCreateOutgoingConnectionFailed(connectionManagerPhoneAccount, request)
         Log.w(TAG, "onCreateOutgoingConnectionFailed")
+    }
+
+    /** The state Telecom asked for, or null when it did not ask for one. */
+    private fun requestedVideoState(request: ConnectionRequest?): Int? {
+        val state = request?.videoState ?: return null
+        return if (state == VideoProfile.STATE_AUDIO_ONLY) null else state
     }
 
     private fun extractCallBundle(extras: Bundle?): Bundle? {
