@@ -35,6 +35,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.hiennv.flutter_callkit_incoming.widgets.RippleRelativeLayout
+import com.hiennv.flutter_callkit_incoming.widgets.SpecIncomingScreen
 import de.hdodenhof.circleimageview.CircleImageView
 import kotlin.math.abs
 import kotlin.math.max
@@ -139,8 +140,16 @@ class CallkitIncomingActivity : Activity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
         }
         transparentStatusAndNavigation()
-        setContentView(R.layout.activity_callkit_incoming)
-        initView()
+        val incoming = intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
+        val spec = IncomingScreenSpec.parse(
+            incoming?.getString(CallkitConstants.EXTRA_CALLKIT_INCOMING_SCREEN)
+        )
+        if (spec != null) {
+            setContentView(buildSpecScreen(spec, incoming))
+        } else {
+            setContentView(R.layout.activity_callkit_incoming)
+            initView()
+        }
         // Reaching onCreate while the notification asked for a full-screen intent is
         // the definitive proof that full-screen ringing works on this device — the
         // one thing no permission query can answer below API 34.
@@ -149,7 +158,8 @@ class CallkitIncomingActivity : Activity() {
             intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
                 ?.getString(CallkitConstants.EXTRA_CALLKIT_ID, ""),
         )
-        incomingData(intent)
+        applyRingingWindow(intent)
+        if (spec == null) incomingData(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 endedCallkitIncomingBroadcastReceiver,
@@ -209,19 +219,78 @@ class CallkitIncomingActivity : Activity() {
     }
 
 
-    private fun incomingData(intent: Intent) {
+    /**
+     * Lock-screen visibility, the wake lock and the ring timeout — the same for
+     * both looks of this screen.
+     */
+    private fun applyRingingWindow(intent: Intent) {
         val data = intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
-        if (data == null) finish()
+        if (data == null) {
+            finish()
+            return
+        }
 
         val isShowFullLockedScreen =
-            data?.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_SHOW_FULL_LOCKED_SCREEN, true)
-        if (isShowFullLockedScreen == true) {
+            data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_SHOW_FULL_LOCKED_SCREEN, true)
+        if (isShowFullLockedScreen) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setShowWhenLocked(true)
             } else {
                 window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
             }
         }
+        val duration = data.getLong(CallkitConstants.EXTRA_CALLKIT_DURATION, 0L)
+        wakeLockRequest(duration)
+        finishTimeout(data, duration)
+    }
+
+    /**
+     * The ringing screen drawn from the host app's contract — see
+     * [IncomingScreenSpec] and [SpecIncomingScreen]. Accept / decline keep the
+     * tap AND the drag-up gesture of the original screen; "message" declines and
+     * hands the conversation to the app ([onMessageClick]).
+     */
+    private fun buildSpecScreen(spec: IncomingScreenSpec, data: Bundle?): View {
+        val screen = SpecIncomingScreen(this, spec)
+        screen.setCaller(data?.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "") ?: "")
+        @Suppress("UNCHECKED_CAST")
+        val headers =
+            data?.getSerializable(CallkitConstants.EXTRA_CALLKIT_HEADERS) as? HashMap<String, Any?>
+        var avatarUrl = data?.getString(CallkitConstants.EXTRA_CALLKIT_AVATAR, "") ?: ""
+        if (avatarUrl.isNotEmpty() &&
+            !avatarUrl.startsWith("http://", true) && !avatarUrl.startsWith("https://", true)
+        ) {
+            avatarUrl = String.format("file:///android_asset/flutter_assets/%s", avatarUrl)
+        }
+        screen.setAvatarUrl(avatarUrl, headers)
+
+        val textAccept = data?.getString(CallkitConstants.EXTRA_CALLKIT_TEXT_ACCEPT, "")
+        val textDecline = data?.getString(CallkitConstants.EXTRA_CALLKIT_TEXT_DECLINE, "")
+        val accept = if (textAccept.isNullOrEmpty()) getString(R.string.text_accept) else textAccept
+        val decline =
+            if (textDecline.isNullOrEmpty()) getString(R.string.text_decline) else textDecline
+        screen.acceptLabel.text = accept
+        screen.declineLabel.text = decline
+        screen.acceptButton.contentDescription = accept
+        screen.declineButton.contentDescription = decline
+
+        screen.acceptButton.setOnClickListener { onAcceptClick() }
+        screen.declineButton.setOnClickListener { onDeclineClick() }
+        screen.acceptButton.enableDragUpToActivate {
+            screen.stopNudge()
+            onAcceptClick()
+        }
+        screen.declineButton.enableDragUpToActivate { onDeclineClick() }
+        screen.messageButton?.let {
+            it.contentDescription = spec.message
+            it.setOnClickListener { onMessageClick() }
+        }
+        return screen
+    }
+
+    private fun incomingData(intent: Intent) {
+        val data = intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
+        if (data == null) return
 
         val textColor = data?.getString(CallkitConstants.EXTRA_CALLKIT_TEXT_COLOR, "#ffffff")
         val isShowCallID = data?.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_SHOW_CALL_ID, false)
@@ -262,11 +331,6 @@ class CallkitIncomingActivity : Activity() {
         if (callType > 0) {
             ivAcceptCall.setImageResource(R.drawable.ic_video)
         }
-        val duration = data?.getLong(CallkitConstants.EXTRA_CALLKIT_DURATION, 0L) ?: 0L
-        wakeLockRequest(duration)
-
-        finishTimeout(data, duration)
-
         val textAccept = data?.getString(CallkitConstants.EXTRA_CALLKIT_TEXT_ACCEPT, "")
         tvAccept.text =
             if (TextUtils.isEmpty(textAccept)) getString(R.string.text_accept) else textAccept
@@ -464,6 +528,25 @@ class CallkitIncomingActivity : Activity() {
             val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             keyguardManager.requestDismissKeyguard(this, null)
         }
+    }
+
+    /**
+     * Decline with a message (the app's "Message" button): the call is declined
+     * through the regular decline path — which also works with no running engine
+     * — and the app is opened with [CallkitConstants.ACTION_CALL_MESSAGE] so it
+     * can show the conversation. The keyguard is dismissed: a conversation is not
+     * shown on the lock screen.
+     */
+    private fun onMessageClick() {
+        val data = intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
+        sendBroadcast(
+            CallkitIncomingBroadcastReceiver.getIntentDecline(this@CallkitIncomingActivity, data)
+        )
+        AppUtils.getAppIntent(this, CallkitConstants.ACTION_CALL_MESSAGE, data)?.let {
+            startActivity(it)
+        }
+        dismissKeyguard()
+        finishTask()
     }
 
     private fun onDeclineClick() {

@@ -3,6 +3,7 @@ package com.hiennv.flutter_callkit_incoming
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -22,7 +23,7 @@ import java.lang.ref.WeakReference
 /** FlutterCallkitIncomingPlugin */
 @SuppressLint("LongLogTag")
 class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
-    PluginRegistry.RequestPermissionsResultListener {
+    PluginRegistry.RequestPermissionsResultListener, PluginRegistry.NewIntentListener {
     companion object {
 
         const val EXTRA_CALLKIT_CALL_DATA = "EXTRA_CALLKIT_CALL_DATA"
@@ -178,7 +179,16 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
         return callkitSoundPlayerManager
     }
 
+    /**
+     * The messenger of the engine THIS registration belongs to. Events that answer
+     * a launch intent (see [deliverLaunchMessage]) must reach the engine of the
+     * activity that was launched — not whichever engine happens to listen (the FCM
+     * background isolate may, too).
+     */
+    private var engineMessenger: BinaryMessenger? = null
+
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        engineMessenger = flutterPluginBinding.binaryMessenger
         sharePluginWithRegister(flutterPluginBinding)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             InAppCallManager(flutterPluginBinding.applicationContext).registerPhoneAccount()
@@ -495,6 +505,33 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
         instance.context = binding.activity.applicationContext
         instance.activity = binding.activity
         binding.addRequestPermissionsResultListener(this)
+        binding.addOnNewIntentListener(this)
+        deliverLaunchMessage(binding.activity.intent)
+    }
+
+    override fun onNewIntent(intent: Intent): Boolean = deliverLaunchMessage(intent)
+
+    /**
+     * "Message" on the full-screen ringing activity declines the call (regular
+     * decline path, works without a running engine) and launches the app with
+     * [CallkitConstants.ACTION_CALL_MESSAGE]. Here the launched activity's engine
+     * receives it as an event so the app can open the conversation.
+     *
+     * Cold start: the activity is created before Dart subscribes to the event
+     * stream, so the event is HELD by this engine's handler and flushed when Dart
+     * listens. The intent's action is cleared once consumed, so a configuration
+     * change (re-attach with the same intent) does not deliver it twice.
+     */
+    private fun deliverLaunchMessage(intent: Intent?): Boolean {
+        if (intent?.action != CallkitConstants.ACTION_CALL_MESSAGE) return false
+        val data = intent.getBundleExtra(EXTRA_CALLKIT_CALL_DATA) ?: return false
+        intent.action = null
+        val handler = engineMessenger?.let { eventHandlers[it] } ?: return false
+        handler.sendWhenListening(
+            CallkitConstants.ACTION_CALL_MESSAGE,
+            CallkitIncomingBroadcastReceiver.eventBody(data),
+        )
+        return true
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -504,6 +541,7 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
         instance.context = binding.activity.applicationContext
         instance.activity = binding.activity
         binding.addRequestPermissionsResultListener(this)
+        binding.addOnNewIntentListener(this)
     }
 
     override fun onDetachedFromActivity() {
@@ -523,8 +561,22 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
 
         fun hasListener(): Boolean = eventSink != null
 
+        /** Events addressed to this engine before Dart listened (see [sendWhenListening]). */
+        private val held = mutableListOf<Pair<String, Map<String, Any?>>>()
+
         override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
             eventSink = sink
+            val pending = synchronized(held) { held.toList().also { held.clear() } }
+            pending.forEach { (event, body) -> send(event, body) }
+        }
+
+        /** Sends now, or holds the event until Dart listens on this engine. */
+        fun sendWhenListening(event: String, body: Map<String, Any?>) {
+            if (eventSink != null) {
+                send(event, body)
+                return
+            }
+            synchronized(held) { held.add(event to body) }
         }
 
         fun send(event: String, body: Map<String, Any?>) {

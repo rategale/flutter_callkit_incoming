@@ -33,6 +33,7 @@ class AndroidParams {
     this.from,
     this.textAccept,
     this.textDecline,
+    this.incomingScreen,
   });
 
   /// Using custom notifications.
@@ -97,6 +98,12 @@ class AndroidParams {
   /// Text for decline button
   final String? textDecline;
 
+  /// The full-screen ringing activity's look, as JSON: colours, sizes, motion
+  /// and texts (see `IncomingScreenSpec` on the Android side). Lets an app
+  /// whose in-app ringing screen is drawn in Flutter make the native one draw
+  /// the same screen. `null` keeps the package's original look.
+  final String? incomingScreen;
+
   factory AndroidParams.fromJson(Map<String, dynamic> json) =>
       _$AndroidParamsFromJson(json);
 
@@ -124,7 +131,8 @@ class AndroidParams {
         'isFullScreen: $isFullScreen, '
         'from: $from, '
         'textAccept: $textAccept, '
-        'textDecline: $textDecline'
+        'textDecline: $textDecline, '
+        'incomingScreen: $incomingScreen'
         '}';
   }
 }

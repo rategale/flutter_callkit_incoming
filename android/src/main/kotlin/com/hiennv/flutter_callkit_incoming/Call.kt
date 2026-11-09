@@ -143,6 +143,15 @@ data class Data(val args: Map<String, Any?>) {
     @JsonProperty("from")
     var from: String = ""
 
+    /**
+     * The incoming-call screen contract as JSON ([IncomingScreenSpec]): colours,
+     * sizes, motion and the texts of the full-screen ringing activity. Empty keeps
+     * the package's original look. The host app sends it so that the native screen
+     * draws exactly what its own in-app ringing screen draws.
+     */
+    @JsonProperty("incomingScreen")
+    var incomingScreen: String = ""
+
     init {
         var android: Map<String, Any?>? = args["android"] as? HashMap<String, Any?>?
         android = android ?: args
@@ -166,6 +175,7 @@ data class Data(val args: Map<String, Any?>) {
         isBot = android["isBot"] as? Boolean ?: false
         isFullScreen = android["isFullScreen"] as? Boolean ?: false
         from = android["from"] as? String ?: ""
+        incomingScreen = android["incomingScreen"] as? String ?: ""
         textAccept = android["textAccept"] as? String ?: ""
         textDecline = android["textDecline"] as? String ?: ""
 
@@ -303,6 +313,7 @@ data class Data(val args: Map<String, Any?>) {
             isShowCallID
         )
         bundle.putString(CallkitConstants.EXTRA_CALLKIT_RINGTONE_PATH, ringtonePath)
+        bundle.putString(CallkitConstants.EXTRA_CALLKIT_INCOMING_SCREEN, incomingScreen)
         bundle.putString(
             CallkitConstants.EXTRA_CALLKIT_BACKGROUND_COLOR,
             backgroundColor
@@ -424,6 +435,8 @@ data class Data(val args: Map<String, Any?>) {
                 CallkitConstants.EXTRA_CALLKIT_RINGTONE_PATH,
                 ""
             )
+            data.incomingScreen =
+                bundle.getString(CallkitConstants.EXTRA_CALLKIT_INCOMING_SCREEN, "") ?: ""
             data.backgroundColor = bundle.getString(
                 CallkitConstants.EXTRA_CALLKIT_BACKGROUND_COLOR,
                 "#0955fa"

@@ -33,6 +33,8 @@ abstract class CallEventConstants {
       'com.hiennv.flutter_callkit_incoming.ACTION_CALL_TOGGLE_AUDIO_SESSION';
   static const String actionCallCustom =
       'com.hiennv.flutter_callkit_incoming.ACTION_CALL_CUSTOM';
+  static const String actionCallMessage =
+      'com.hiennv.flutter_callkit_incoming.ACTION_CALL_MESSAGE';
 }
 
 /// Base sealed class for CallEvent
@@ -103,6 +105,24 @@ class CallEventActionCallDecline extends CallEvent {
   @override
   String toString() =>
       'CallEventActionCallDecline(callKitParams: $callKitParams)';
+}
+
+/// "Message" on the Android full-screen ringing activity. The call was already
+/// declined through the regular decline path ([CallEventActionCallDecline]);
+/// this event asks the app to open the conversation. Delivered once, to the
+/// engine of the activity it launched — held until that engine listens, so a
+/// cold start does not lose it.
+class CallEventActionCallMessage extends CallEvent {
+  const CallEventActionCallMessage(this.callKitParams);
+
+  @override
+  String get eventName => CallEventConstants.actionCallMessage;
+
+  final CallKitParams callKitParams;
+
+  @override
+  String toString() =>
+      'CallEventActionCallMessage(callKitParams: $callKitParams)';
 }
 
 class CallEventActionCallEnded extends CallEvent {

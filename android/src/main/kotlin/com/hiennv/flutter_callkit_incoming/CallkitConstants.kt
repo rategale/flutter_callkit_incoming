@@ -20,6 +20,15 @@ object CallkitConstants {
         "com.hiennv.flutter_callkit_incoming.ACTION_CALL_CALLBACK"
     const val ACTION_CALL_CUSTOM =
         "com.hiennv.flutter_callkit_incoming.ACTION_CALL_CUSTOM"
+
+    /**
+     * "Decline and reply with a message" from the full-screen ringing activity.
+     * The call itself is declined through the regular [ACTION_CALL_DECLINE] path;
+     * this event only tells the app to open the conversation. It is delivered
+     * to the engine of the activity it launches, held until that engine listens.
+     */
+    const val ACTION_CALL_MESSAGE =
+        "com.hiennv.flutter_callkit_incoming.ACTION_CALL_MESSAGE"
     const val ACTION_CALL_AUDIO_STATE_CHANGE =
         "com.hiennv.flutter_callkit_incoming.ACTION_CALL_AUDIO_STATE_CHANGE"
     const val ACTION_CALL_HELD = "com.hiennv.flutter_callkit_incoming.ACTION_CALL_HELD"
@@ -38,6 +47,7 @@ object CallkitConstants {
     const val EXTRA_CALLKIT_DURATION = "EXTRA_CALLKIT_DURATION"
     const val EXTRA_CALLKIT_TEXT_ACCEPT = "EXTRA_CALLKIT_TEXT_ACCEPT"
     const val EXTRA_CALLKIT_TEXT_DECLINE = "EXTRA_CALLKIT_TEXT_DECLINE"
+    const val EXTRA_CALLKIT_INCOMING_SCREEN = "EXTRA_CALLKIT_INCOMING_SCREEN"
     const val EXTRA_CALLKIT_ACCEPT_COLOR = "EXTRA_CALLKIT_ACCEPT_COLOR"
     const val EXTRA_CALLKIT_DECLINE_COLOR = "EXTRA_CALLKIT_DECLINE_COLOR"
 

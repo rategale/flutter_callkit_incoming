@@ -290,6 +290,12 @@ class FlutterCallkitIncoming {
           throw const FormatException('[ACTION_CALL_DECLINE] id is null.');
         }
         return CallEventActionCallDecline(callkitParams);
+      case CallEventConstants.actionCallMessage:
+        final callkitParams = toCallkitParams(data);
+        if (callkitParams == null) {
+          throw const FormatException('[ACTION_CALL_MESSAGE] id is null.');
+        }
+        return CallEventActionCallMessage(callkitParams);
       case CallEventConstants.actionCallEnded:
         final callkitParams = toCallkitParams(data);
         if (callkitParams == null) {
