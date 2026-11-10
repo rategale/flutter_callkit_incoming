@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.core.content.ContextCompat
 
 class CallkitNotificationService : Service() {
@@ -19,6 +20,8 @@ class CallkitNotificationService : Service() {
     private var incomingTimeoutRunnable: Runnable? = null
 
     companion object {
+
+        private const val TAG = "CallkitNotificationService"
 
         private val ActionForeground = listOf(
             CallkitConstants.ACTION_CALL_INCOMING,
@@ -156,8 +159,57 @@ class CallkitNotificationService : Service() {
         val callkitNotification =
             getCallkitNotificationManager()?.getOnGoingCallNotification(bundle, false)
         if (callkitNotification != null) {
-            startCallForeground(callkitNotification.id, callkitNotification.notification)
+            val isVideo = bundle.getInt(CallkitConstants.EXTRA_CALLKIT_TYPE, 0) > 0
+            startOngoingCallForeground(
+                callkitNotification.id,
+                callkitNotification.notification,
+                isVideo
+            )
         }
+    }
+
+    /**
+     * Promotes the ANSWERED / DIALING call to the foreground, holding the capture
+     * types when the platform allows it.
+     *
+     * [startCallForeground] explains why phoneCall alone is the baseline: the
+     * microphone and camera types are gated on while-in-use eligibility and throw
+     * SecurityException when the start comes from the background (answering from
+     * the notification). That reasoning does NOT hold when the app is in the
+     * foreground — the user dialing, or answering inside the app — and there the
+     * phoneCall type alone is not enough: an OUTGOING call has no Telecom
+     * connection behind it, so once the user leaves the app Android 11+ silences
+     * the microphone of a process without a microphone-typed foreground service.
+     * The callee then hears nothing although the call UI says "connected".
+     *
+     * So the widest legal mask is tried first and narrowed on SecurityException:
+     * microphone|camera (video) → microphone → phoneCall. A background start lands
+     * exactly where it did before this change.
+     */
+    @SuppressLint("MissingPermission")
+    private fun startOngoingCallForeground(
+        notificationId: Int,
+        notification: Notification,
+        isVideo: Boolean
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val call = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            val mic = call or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            val masks = if (isVideo) {
+                listOf(mic or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA, mic)
+            } else {
+                listOf(mic)
+            }
+            for (mask in masks) {
+                try {
+                    startForeground(notificationId, notification, mask)
+                    return
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "ongoing call FGS mask $mask not allowed now: ${e.message}")
+                }
+            }
+        }
+        startCallForeground(notificationId, notification)
     }
 
     /**
