@@ -84,8 +84,12 @@ class CallManager: NSObject {
         // outgoing call as connected would look correct while logging a failed
         // transaction on every call.
         if callItem?.isOutGoing == true { return }
+        // Nothing to answer: the call is not on record here, or it was already
+        // answered on the system UI (CXAnswerCallAction marks it accepted). A
+        // second answer request is rejected by CallKit, again only as a print.
+        guard let callItem = callItem, !callItem.data.isAccepted else { return }
 
-        let answerAction = CXAnswerCallAction(call: call.uuid)        
+        let answerAction = CXAnswerCallAction(call: callItem.uuid)
         let transaction = CXTransaction(action: answerAction)
 
         callController.request(transaction) { error in
@@ -108,7 +112,11 @@ class CallManager: NSObject {
     }
     
     func activeCalls() -> [[String: Any]] {
-        let calls = callController.callObserver.calls
+        // An ENDED call stays in the observer for a moment after it ends, and by
+        // then its bookkeeping is gone — it came back as a bare {id} entry, which
+        // reads as a live call that was never accepted. An app asking "is this
+        // call still ringing?" right after it ended was told yes.
+        let calls = callController.callObserver.calls.filter { !$0.hasEnded }
         var json = [[String: Any]]()
         for call in calls {
             let callItem = self.callWithUUID(uuid: call.uuid)

@@ -4,6 +4,16 @@ import CallKit
 import AVFoundation
 import UserNotifications
 
+/// Where one call stands on this device — see ownCallState(_:).
+public enum CallkitOwnCallState {
+    /// Not in CallKit here (never reported, or already ended).
+    case none
+    /// Incoming, on the system UI, not answered yet.
+    case ringing
+    /// Answered on this device, or placed from it.
+    case answered
+}
+
 @available(iOS 10.0, *)
 public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProviderDelegate {
     
@@ -128,17 +138,11 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
             result(true)
             break
         case "endCall":
-            guard let args = call.arguments else {
-                result(true)
-                return
-            }
-            if(self.isFromPushKit){
-                self.endCall(self.data!)
-            }else{
-                if let getArgs = args as? [String: Any] {
-                    self.data = Data(args: getArgs)
-                    self.endCall(self.data!)
-                }
+            // The id the app names is the call that ends. This used to end the
+            // call of the LAST VoIP push whenever one had arrived, whatever id
+            // was passed — see endCall(_:).
+            if let getArgs = call.arguments as? [String: Any] {
+                self.endCall(Data(args: getArgs))
             }
             result(true)
             break
@@ -177,17 +181,9 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
             result(true)
             break
         case "callConnected":
-            guard let args = call.arguments else {
-                result(true)
-                return
-            }
-            if(self.isFromPushKit){
-                self.connectedCall(self.data!)
-            }else{
-                    if let getArgs = args as? [String: Any] {
-                    self.data = Data(args: getArgs)
-                    self.connectedCall(self.data!)
-                    }
+            // Same rule as endCall: the named call, not the last pushed one.
+            if let getArgs = call.arguments as? [String: Any] {
+                self.connectedCall(Data(args: getArgs))
             }
             result(true)
             break
@@ -227,6 +223,16 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
             result(true)
             break
         case "hideCallkitIncoming":
+            // CallKit has no "stop ringing but keep the call": a ringing call
+            // leaves the screen only by ending. It ends here as a call that was
+            // NOT taken on this device's system UI — reported, not requested, so
+            // no DECLINE comes back (see reportCallEnded). An answered call is
+            // not "ringing" and is left alone: hiding must never hang up.
+            if let getArgs = call.arguments as? [String: Any],
+               let id = getArgs["id"] as? String,
+               self.ownCallState(id) == .ringing {
+                self.reportCallEnded(id, reason: .remoteEnded)
+            }
             result(true)
             break
         case "endNativeSubsystemOnly":
@@ -387,51 +393,99 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
         }
     }
     
+    /// Ends the call [data] names.
+    ///
+    /// It used to end the call of the LAST VoIP push instead whenever one had
+    /// arrived (`isFromPushKit`), and that flag stays set until something resets
+    /// it — a call declined or missed on the CallKit UI does not. So with a
+    /// pushed call still on record, an app hanging up a DIFFERENT call (its own
+    /// outgoing call, a second call) ended the stale one and left the live call
+    /// stuck in the system UI.
+    ///
+    /// It also sent ACTION_CALL_ENDED itself before requesting the end. The
+    /// CXEndCallAction handler reports the outcome (ENDED or DECLINE) once the
+    /// end is performed; the early copy was a second event for the same call,
+    /// sent even when the request then failed.
     @objc public func endCall(_ data: Data) {
         // Guard against malformed UUID — see CallManager.swift:startCall for rationale.
-        // PushKit branch reads uuid from self.data (stored during showCallkitIncoming);
-        // non-PushKit reads from the incoming data. Either source can be invalid.
-        let uuidSourceString: String
-        if self.isFromPushKit {
-            guard let stored = self.data else {
-                NSLog("[CallkitIncoming] endCall: PushKit branch but self.data is nil — ignored")
-                return
-            }
-            uuidSourceString = stored.uuid
-            self.isFromPushKit = false
-            self.sendEvent(SwiftFlutterCallkitIncomingPlugin.ACTION_CALL_ENDED, data.toJSON())
-        } else {
-            uuidSourceString = data.uuid
-        }
-        guard let uuid = UUID(uuidString: uuidSourceString) else {
-            NSLog("[CallkitIncoming] endCall: invalid UUID '\(uuidSourceString)' — ignored")
+        guard let uuid = UUID(uuidString: data.uuid) else {
+            NSLog("[CallkitIncoming] endCall: invalid UUID '\(data.uuid)' — ignored")
             return
         }
-        let call = Call(uuid: uuid, data: data)
+        self.forgetPushedCall(uuid)
+        self.callManager.endCall(call: Call(uuid: uuid, data: data))
+    }
 
+    /// Ends a call that ended somewhere ELSE — the caller hung up, the server
+    /// gave up ringing, another device of the user answered or declined it.
+    ///
+    /// CallKit has two ways to end a call and they are not interchangeable:
+    /// a CXEndCallAction is the USER of this device ending it, and the delegate
+    /// answers it with ACTION_CALL_DECLINE (never answered) or ACTION_CALL_ENDED.
+    /// An app turns DECLINE into a "declined" request to its server — for a call
+    /// that was cancelled, or answered on another device, that is a decline the
+    /// user never made. `reportCall(with:endedAt:reason:)` is CallKit's API for
+    /// a call ended outside this device: the system UI closes, Recents gets the
+    /// right entry, and no action (so no event) is produced.
+    ///
+    /// The call's bookkeeping is released as the delegate would have released
+    /// it; left behind, the ring timeout would later fire for it and post a
+    /// missed-call notification for a call that was answered elsewhere.
+    @objc public func reportCallEnded(_ id: String, reason: CXCallEndedReason) {
+        guard let uuid = UUID(uuidString: id) else {
+            NSLog("[CallkitIncoming] reportCallEnded: invalid UUID '\(id)' — ignored")
+            return
+        }
+        self.sharedProvider?.reportCall(with: uuid, endedAt: Date(), reason: reason)
+        self.forgetPushedCall(uuid)
+        guard let call = self.callManager.callWithUUID(uuid: uuid) else { return }
+        call.endCall()
+        self.callManager.removeCall(call)
+        if self.answerCall === call { self.answerCall = nil }
+        if self.outgoingCall === call { self.outgoingCall = nil }
+    }
 
-        self.callManager.endCall(call: call)
+    /// Where a call stands on THIS device, as CallKit knows it.
+    ///
+    /// A host app needs this to handle a signal about a call correctly: a
+    /// "stop ringing" signal means one thing for a call still ringing here and
+    /// the opposite for a call this device has answered.
+    public func ownCallState(_ id: String) -> CallkitOwnCallState {
+        guard let uuid = UUID(uuidString: id),
+              let call = self.callManager.callWithUUID(uuid: uuid),
+              !call.hasEnded else {
+            return .none
+        }
+        if call.isOutGoing || call.data.isAccepted || call.hasConnected {
+            return .answered
+        }
+        return .ringing
+    }
+
+    /// Whether this app has a call in CallKit that has not ended — ringing,
+    /// answered or placed. Calls of other apps and cellular calls do not count.
+    public var hasOwnLiveCall: Bool {
+        return self.callManager.calls.contains { !$0.hasEnded }
+    }
+
+    /// The pushed call is done with: the PushKit branches of this class stop
+    /// reading its stored data.
+    private func forgetPushedCall(_ uuid: UUID) {
+        if let stored = self.data, UUID(uuidString: stored.uuid) == uuid {
+            self.isFromPushKit = false
+        }
     }
     
+    /// Reports the call [data] names as connected — for an INCOMING call still
+    /// ringing on the system UI this answers it there (the user answered inside
+    /// the app). Like endCall(_:), it used to act on the last pushed call.
     @objc public func connectedCall(_ data: Data) {
         // Guard against malformed UUID — see CallManager.swift:startCall for rationale.
-        let uuidSourceString: String
-        if self.isFromPushKit {
-            guard let stored = self.data else {
-                NSLog("[CallkitIncoming] connectedCall: PushKit branch but self.data is nil — ignored")
-                return
-            }
-            uuidSourceString = stored.uuid
-            self.isFromPushKit = false
-        } else {
-            uuidSourceString = data.uuid
-        }
-        guard let uuid = UUID(uuidString: uuidSourceString) else {
-            NSLog("[CallkitIncoming] connectedCall: invalid UUID '\(uuidSourceString)' — ignored")
+        guard let uuid = UUID(uuidString: data.uuid) else {
+            NSLog("[CallkitIncoming] connectedCall: invalid UUID '\(data.uuid)' — ignored")
             return
         }
-        let call = Call(uuid: uuid, data: data)
-        self.callManager.connectedCall(call: call)
+        self.callManager.connectedCall(call: Call(uuid: uuid, data: data))
     }
     
     @objc public func activeCalls() -> [[String: Any]] {
@@ -489,15 +543,20 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
     
     
     func callEndTimeout(_ data: Data) {
-        self.saveEndCall(data.uuid, 3)
         // Guard against malformed UUID — see CallManager.swift:startCall for rationale.
         guard let uuid = UUID(uuidString: data.uuid) else {
             NSLog("[CallkitIncoming] callEndTimeout: invalid UUID '\(data.uuid)' — ignored")
             return
         }
         guard let call = self.callManager.callWithUUID(uuid: uuid) else {
+            self.saveEndCall(data.uuid, 3)
             return
         }
+        // Reported AND released. Only reporting it (saveEndCall) left the call
+        // on record as live forever: every later question about it — "is this
+        // call ringing?", "does the app have a live call?" — answered yes for a
+        // call the system had already ended.
+        self.reportCallEnded(data.uuid, reason: .unanswered)
         self.showMissedCallNotification(data)
         sendEvent(SwiftFlutterCallkitIncomingPlugin.ACTION_CALL_TIMEOUT, data.toJSON())
         if let appDelegate = UIApplication.shared.delegate as? CallkitIncomingAppDelegate {
@@ -698,7 +757,10 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
         call.endCall()
         self.callManager.removeCall(call)
         if (self.answerCall == nil && self.outgoingCall == nil) {
-            sendEvent(SwiftFlutterCallkitIncomingPlugin.ACTION_CALL_DECLINE, self.data?.toJSON())
+            // The DECLINED call's data, not self.data: self.data is whatever the
+            // app last sent or the last push carried, and an app declines the
+            // call whose id this event names.
+            sendEvent(SwiftFlutterCallkitIncomingPlugin.ACTION_CALL_DECLINE, call.data.toJSON())
             if let appDelegate = UIApplication.shared.delegate as? CallkitIncomingAppDelegate {
                 appDelegate.onDecline(call, action)
             } else {
