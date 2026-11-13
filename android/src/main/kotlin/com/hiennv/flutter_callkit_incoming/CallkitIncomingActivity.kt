@@ -503,6 +503,14 @@ class CallkitIncomingActivity : Activity() {
     }
 
 
+    /**
+     * Answer. The keyguard is deliberately NOT dismissed here: a call answered on
+     * the lock screen must be talkable without unlocking (WhatsApp/the dialer do
+     * the same). Upstream requested a keyguard dismissal, so a secure lock screen
+     * asked for the PIN before the user could talk. The host app shows its call
+     * UI over the lock screen itself (setShowWhenLocked while the call is
+     * full-screen) and asks for an unlock only when the user leaves the call UI.
+     */
     private fun onAcceptClick() {
         // Log.d("CallkitIncomingActivity", "[CALLKIT] 📱 onAcceptClick")
         val data = intent.extras?.getBundle(CallkitConstants.EXTRA_CALLKIT_INCOMING_DATA)
@@ -519,7 +527,6 @@ class CallkitIncomingActivity : Activity() {
             TransparentActivity.getIntent(this, CallkitConstants.ACTION_CALL_ACCEPT, data)
         startActivity(acceptIntent)
 
-        dismissKeyguard()
         finish()
     }
 
